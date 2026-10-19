@@ -1,14 +1,21 @@
 {
   "name": "innobyte_blog_api",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "RESTful Blog API built with Node.js, Express, and MongoDB",
+  "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "test": "node --test"
   },
-  "keywords": [],
+  "keywords": [
+    "blog-api",
+    "nodejs",
+    "express",
+    "mongodb",
+    "rest-api",
+    "jwt-authentication"
+  ],
   "author": "",
   "license": "ISC",
   "type": "module",
@@ -27,4 +34,5 @@
     "nodemon": "^3.1.14",
     "supertest": "^7.3.1"
   }
+
 }
