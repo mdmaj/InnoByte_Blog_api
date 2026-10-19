@@ -6,12 +6,16 @@ import {
   updateCommentSchema,
 } from "../validators/commentValidator.js";
 
+// Create comment
+// Supports POST /comments and POST /posts/:postId/comments
 export const createComment = async (req, res) => {
   try {
-    if (!mongoose.isValidObjectId(req.params.postId)) {
+    const postId = req.params.postId || req.body.post_id;
+
+    if (!postId || !mongoose.isValidObjectId(postId)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid post ID",
+        message: "Valid post_id is required",
       });
     }
 
@@ -28,7 +32,7 @@ export const createComment = async (req, res) => {
       });
     }
 
-    const postExists = await Post.exists({ _id: req.params.postId });
+    const postExists = await Post.exists({ _id: postId });
 
     if (!postExists) {
       return res.status(404).json({
@@ -39,7 +43,7 @@ export const createComment = async (req, res) => {
 
     const comment = await Comment.create({
       content: result.data.content,
-      post: req.params.postId,
+      post: postId,
       author: req.user.id,
     });
 
@@ -58,16 +62,20 @@ export const createComment = async (req, res) => {
   }
 };
 
+// Get comments for a post
+// Supports GET /comments?post_id=... and GET /posts/:postId/comments
 export const getPostComments = async (req, res) => {
   try {
-    if (!mongoose.isValidObjectId(req.params.postId)) {
+    const postId = req.params.postId || req.query.post_id;
+
+    if (!postId || !mongoose.isValidObjectId(postId)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid post ID",
+        message: "Valid post_id is required",
       });
     }
 
-    const postExists = await Post.exists({ _id: req.params.postId });
+    const postExists = await Post.exists({ _id: postId });
 
     if (!postExists) {
       return res.status(404).json({
@@ -76,7 +84,7 @@ export const getPostComments = async (req, res) => {
       });
     }
 
-    const comments = await Comment.find({ post: req.params.postId })
+    const comments = await Comment.find({ post: postId })
       .sort({ createdAt: -1 })
       .populate("author", "name")
       .lean();
@@ -96,9 +104,52 @@ export const getPostComments = async (req, res) => {
   }
 };
 
+// Get one comment by ID
+// GET /comments/:id
+export const getCommentById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid comment ID",
+      });
+    }
+
+    const comment = await Comment.findById(id)
+      .populate("author", "name")
+      .populate("post", "title")
+      .lean();
+
+    if (!comment) {
+      return res.status(404).json({
+        success: false,
+        message: "Comment not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: { comment },
+    });
+  } catch (error) {
+    console.error("Get comment by ID error:", error.message);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+// Update comment
+// Supports PUT and PATCH /comments/:id
 export const updateComment = async (req, res) => {
   try {
-    if (!mongoose.isValidObjectId(req.params.id)) {
+    const { id } = req.params;
+
+    if (!mongoose.isValidObjectId(id)) {
       return res.status(400).json({
         success: false,
         message: "Invalid comment ID",
@@ -120,11 +171,11 @@ export const updateComment = async (req, res) => {
 
     const comment = await Comment.findOneAndUpdate(
       {
-        _id: req.params.id,
+        _id: id,
         author: req.user.id,
       },
       { $set: { content: result.data.content } },
-      { returnDocument: "after", runValidators: true }
+      { returnDocument: "after", runValidators: true },
     );
 
     if (!comment) {
@@ -149,9 +200,13 @@ export const updateComment = async (req, res) => {
   }
 };
 
+// Delete comment
+// DELETE /comments/:id
 export const deleteComment = async (req, res) => {
   try {
-    if (!mongoose.isValidObjectId(req.params.id)) {
+    const { id } = req.params;
+
+    if (!mongoose.isValidObjectId(id)) {
       return res.status(400).json({
         success: false,
         message: "Invalid comment ID",
@@ -159,7 +214,7 @@ export const deleteComment = async (req, res) => {
     }
 
     const comment = await Comment.findOneAndDelete({
-      _id: req.params.id,
+      _id: id,
       author: req.user.id,
     });
 

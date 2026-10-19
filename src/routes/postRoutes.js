@@ -1,3 +1,4 @@
+
 import { Router } from "express";
 import authMiddleware from "../middleware/authMiddleware.js";
 import {
@@ -16,7 +17,11 @@ router.get("/:id", getPostById);
 
 // Authenticated write endpoints
 router.post("/", authMiddleware, createPost);
+
+// Support both assignment PUT and existing PATCH requests
+router.put("/:id", authMiddleware, updatePost);
 router.patch("/:id", authMiddleware, updatePost);
+
 router.delete("/:id", authMiddleware, deletePost);
 
 export default router;
