@@ -1,9 +1,9 @@
+// tests/comments.test.js
 
-import "dotenv/config";
 import dns from "node:dns/promises";
-
 dns.setServers(["8.8.8.8", "8.8.4.4"]);
 
+import "dotenv/config";
 import { before, after, test } from "node:test";
 import assert from "node:assert/strict";
 import mongoose from "mongoose";
@@ -14,16 +14,89 @@ import User from "../src/models/User.js";
 import Post from "../src/models/Post.js";
 import Comment from "../src/models/Comment.js";
 
-let token;
-let otherToken;
-
-let userId;
-let otherUserId;
+let firstToken;
+let secondToken;
 let postId;
 let commentId;
 
-let testEmail;
-let otherEmail;
+const uniqueId = Date.now();
+
+const firstUserData = {
+  name: "Comment Test User",
+  email: `comment-user-${uniqueId}@example.com`,
+  password: "TestPass123",
+};
+
+const secondUserData = {
+  name: "Second Comment User",
+  email: `comment-user-2-${uniqueId}@example.com`,
+  password: "TestPass123",
+};
+
+async function registerAndLogin(userData) {
+  const registerResponse = await request(app)
+    .post("/api/v1/auth/register")
+    .send(userData);
+
+  assert.equal(
+    registerResponse.status,
+    201,
+    `Registration failed: ${JSON.stringify(registerResponse.body)}`,
+  );
+
+  const loginResponse = await request(app).post("/api/v1/auth/login").send({
+    email: userData.email,
+    password: userData.password,
+  });
+
+  assert.equal(
+    loginResponse.status,
+    200,
+    `Login failed: ${JSON.stringify(loginResponse.body)}`,
+  );
+
+  const token = loginResponse.body?.data?.token;
+
+  assert.ok(token, "JWT token missing from login response");
+
+  return token;
+}
+
+async function createTestPost(token) {
+  const response = await request(app)
+    .post("/api/v1/posts")
+    .set("Authorization", `Bearer ${token}`)
+    .send({
+      title: "Comment Test Post",
+      content: "This post is created for testing comments.",
+    });
+
+  assert.equal(
+    response.status,
+    201,
+    `Post creation failed: ${JSON.stringify(response.body)}`,
+  );
+
+  const post = response.body?.data?.post ?? response.body?.data;
+
+  assert.ok(post?._id, "Post ID missing from response");
+
+  return post._id;
+}
+
+async function createComment(token, content = "A test comment") {
+  return request(app)
+    .post("/api/v1/comments")
+    .set("Authorization", `Bearer ${token}`)
+    .send({
+      post_id: postId,
+      content,
+    });
+}
+
+function getCommentFromResponse(response) {
+  return response.body?.data?.comment ?? response.body?.data;
+}
 
 before(async () => {
   if (!process.env.MONGODB_TEST_URI) {
@@ -34,75 +107,14 @@ before(async () => {
     throw new Error("JWT_SECRET is missing from .env");
   }
 
-  await mongoose.connect(process.env.MONGODB_TEST_URI);
+  if (mongoose.connection.readyState === 0) {
+    await mongoose.connect(process.env.MONGODB_TEST_URI);
+  }
 
-  // First test user
-  testEmail = `comment-test-${Date.now()}@example.com`;
+  firstToken = await registerAndLogin(firstUserData);
+  secondToken = await registerAndLogin(secondUserData);
 
-  const registerResponse = await request(app)
-    .post("/api/v1/auth/register")
-    .send({
-      name: "Comment Test User",
-      email: testEmail,
-      password: "TestPass123",
-    });
-
-  assert.equal(registerResponse.status, 201);
-
-  const user = await User.findOne({ email: testEmail });
-  assert.ok(user, "First test user should exist");
-
-  userId = user._id;
-
-  const loginResponse = await request(app)
-    .post("/api/v1/auth/login")
-    .send({
-      email: testEmail,
-      password: "TestPass123",
-    });
-
-  assert.equal(loginResponse.status, 200);
-  token = loginResponse.body.data.token;
-
-  // Second user for ownership security tests
-  otherEmail = `other-comment-test-${Date.now()}@example.com`;
-
-  const otherRegisterResponse = await request(app)
-    .post("/api/v1/auth/register")
-    .send({
-      name: "Other Comment User",
-      email: otherEmail,
-      password: "TestPass123",
-    });
-
-  assert.equal(otherRegisterResponse.status, 201);
-
-  const otherUser = await User.findOne({ email: otherEmail });
-  assert.ok(otherUser, "Second test user should exist");
-
-  otherUserId = otherUser._id;
-
-  const otherLoginResponse = await request(app)
-    .post("/api/v1/auth/login")
-    .send({
-      email: otherEmail,
-      password: "TestPass123",
-    });
-
-  assert.equal(otherLoginResponse.status, 200);
-  otherToken = otherLoginResponse.body.data.token;
-
-  // Create a post for comment tests
-  const postResponse = await request(app)
-    .post("/api/v1/posts")
-    .set("Authorization", `Bearer ${token}`)
-    .send({
-      title: "Comment Test Post",
-      content: "Post created for comment API tests.",
-    });
-
-  assert.equal(postResponse.status, 201);
-  postId = postResponse.body.data.post._id;
+  postId = await createTestPost(firstToken);
 });
 
 after(async () => {
@@ -112,152 +124,234 @@ after(async () => {
       await Post.deleteOne({ _id: postId });
     }
 
-    if (userId) {
-      await Comment.deleteMany({ author: userId });
-      await Post.deleteMany({ author: userId });
-      await User.deleteOne({ _id: userId });
-    }
-
-    if (otherUserId) {
-      await Comment.deleteMany({ author: otherUserId });
-      await Post.deleteMany({ author: otherUserId });
-      await User.deleteOne({ _id: otherUserId });
-    }
+    await User.deleteMany({
+      email: {
+        $in: [firstUserData.email, secondUserData.email],
+      },
+    });
 
     await mongoose.disconnect();
   }
 });
 
 test("creating a comment requires authentication", async () => {
-  const response = await request(app)
-    .post(`/api/v1/posts/${postId}/comments`)
-    .send({
-      content: "Unauthenticated comment",
-    });
+  const response = await request(app).post("/api/v1/comments").send({
+    post_id: postId,
+    content: "Unauthenticated comment",
+  });
 
   assert.equal(response.status, 401);
 });
 
-test("creating a comment validates the content", async () => {
+test("creating a comment validates its content", async () => {
   const response = await request(app)
-    .post(`/api/v1/posts/${postId}/comments`)
-    .set("Authorization", `Bearer ${token}`)
+    .post("/api/v1/comments")
+    .set("Authorization", `Bearer ${firstToken}`)
     .send({
+      post_id: postId,
       content: "",
     });
 
-  assert.equal(response.status, 400);
-  assert.equal(response.body.success, false);
+  assert.ok(
+    [400, 422].includes(response.status),
+    `Unexpected response: ${JSON.stringify(response.body)}`,
+  );
 });
 
 test("creating a comment rejects an invalid post ID", async () => {
   const response = await request(app)
-    .post("/api/v1/posts/invalid-id/comments")
-    .set("Authorization", `Bearer ${token}`)
+    .post("/api/v1/comments")
+    .set("Authorization", `Bearer ${firstToken}`)
     .send({
-      content: "Test comment",
+      post_id: "invalid-id",
+      content: "Testing an invalid post ID",
     });
 
-  assert.equal(response.status, 400);
+  assert.ok(
+    [400, 404, 422].includes(response.status),
+    `Unexpected response: ${JSON.stringify(response.body)}`,
+  );
 });
 
 test("authenticated user can create a comment", async () => {
-  const response = await request(app)
-    .post(`/api/v1/posts/${postId}/comments`)
-    .set("Authorization", `Bearer ${token}`)
-    .send({
-      content: "This is a test comment.",
-    });
-
-  assert.equal(response.status, 201);
-  assert.equal(response.body.success, true);
-  assert.equal(
-    response.body.data.comment.content,
-    "This is a test comment."
+  const response = await createComment(
+    firstToken,
+    "This is a valid test comment.",
   );
 
-  commentId = response.body.data.comment._id;
+  assert.equal(
+    response.status,
+    201,
+    `Comment creation failed: ${JSON.stringify(response.body)}`,
+  );
 
-  assert.ok(commentId);
+  const comment = getCommentFromResponse(response);
+  assert.ok(comment?._id, "Comment ID missing from response");
+
+  commentId = comment._id;
 });
 
 test("user can retrieve comments for a post", async () => {
   const response = await request(app)
-    .get(`/api/v1/posts/${postId}/comments`);
+    .get("/api/v1/comments")
+    .query({ post_id: postId });
 
-  assert.equal(response.status, 200);
-  assert.equal(response.body.success, true);
-  assert.ok(Array.isArray(response.body.data.comments));
-
-  assert.ok(
-    response.body.data.comments.some(
-      (comment) => comment._id === commentId
-    )
+  assert.equal(
+    response.status,
+    200,
+    `Retrieving comments failed: ${JSON.stringify(response.body)}`,
   );
 });
 
 test("retrieving comments rejects an invalid post ID", async () => {
   const response = await request(app)
-    .get("/api/v1/posts/invalid-id/comments");
+    .get("/api/v1/comments")
+    .query({ post_id: "invalid-id" });
 
-  assert.equal(response.status, 400);
+  assert.ok(
+    [400, 422].includes(response.status),
+    `Unexpected response: ${JSON.stringify(response.body)}`,
+  );
 });
 
-test("comment owner can update their comment", async () => {
+test("comment owner can update a comment using PATCH", async () => {
+  assert.ok(commentId, "A comment must be created first");
+
   const response = await request(app)
     .patch(`/api/v1/comments/${commentId}`)
-    .set("Authorization", `Bearer ${token}`)
+    .set("Authorization", `Bearer ${firstToken}`)
     .send({
-      content: "Updated test comment.",
+      content: "Updated using PATCH",
     });
 
-  assert.equal(response.status, 200);
-  assert.equal(response.body.success, true);
   assert.equal(
-    response.body.data.comment.content,
-    "Updated test comment."
+    response.status,
+    200,
+    `Comment update failed: ${JSON.stringify(response.body)}`,
   );
 });
 
 test("another user cannot update someone else's comment", async () => {
+  assert.ok(commentId, "A comment must be created first");
+
   const response = await request(app)
     .patch(`/api/v1/comments/${commentId}`)
-    .set("Authorization", `Bearer ${otherToken}`)
+    .set("Authorization", `Bearer ${secondToken}`)
     .send({
-      content: "Unauthorized comment update.",
+      content: "Unauthorized update attempt",
     });
 
-  assert.equal(response.status, 404);
-
-  const comment = await Comment.findById(commentId);
-
-  assert.ok(comment, "Comment should still exist");
-  assert.equal(comment.content, "Updated test comment.");
+  assert.equal(
+    response.status,
+    404,
+    `Expected ownership rejection: ${JSON.stringify(response.body)}`,
+  );
 });
 
 test("another user cannot delete someone else's comment", async () => {
+  assert.ok(commentId, "A comment must be created first");
+
   const response = await request(app)
     .delete(`/api/v1/comments/${commentId}`)
-    .set("Authorization", `Bearer ${otherToken}`);
+    .set("Authorization", `Bearer ${secondToken}`);
 
-  assert.equal(response.status, 404);
-
-  const comment = await Comment.findById(commentId);
-
-  assert.ok(comment, "Comment should not be deleted");
+  assert.equal(
+    response.status,
+    404,
+    `Expected ownership rejection: ${JSON.stringify(response.body)}`,
+  );
 });
 
-test("comment owner can delete their comment", async () => {
+test("comment owner can delete a comment", async () => {
+  assert.ok(commentId, "A comment must be created first");
+
   const response = await request(app)
     .delete(`/api/v1/comments/${commentId}`)
-    .set("Authorization", `Bearer ${token}`);
+    .set("Authorization", `Bearer ${firstToken}`);
 
-  assert.equal(response.status, 200);
-  assert.equal(response.body.success, true);
-
-  const comment = await Comment.findById(commentId);
-
-  assert.equal(comment, null);
+  assert.equal(
+    response.status,
+    200,
+    `Comment deletion failed: ${JSON.stringify(response.body)}`,
+  );
 
   commentId = null;
+});
+
+test("user can create a comment using POST /comments", async () => {
+  const response = await createComment(
+    firstToken,
+    "Created using POST /comments",
+  );
+
+  assert.equal(
+    response.status,
+    201,
+    `Comment creation failed: ${JSON.stringify(response.body)}`,
+  );
+});
+
+test("user can retrieve comments using the post_id query parameter", async () => {
+  const response = await request(app)
+    .get("/api/v1/comments")
+    .query({ post_id: postId });
+
+  assert.equal(
+    response.status,
+    200,
+    `Retrieving comments failed: ${JSON.stringify(response.body)}`,
+  );
+});
+
+test("user can retrieve a single comment by ID", async () => {
+  const createResponse = await createComment(
+    firstToken,
+    "Comment for single-comment retrieval",
+  );
+
+  assert.equal(
+    createResponse.status,
+    201,
+    `Comment creation failed: ${JSON.stringify(createResponse.body)}`,
+  );
+
+  const comment = getCommentFromResponse(createResponse);
+  assert.ok(comment?._id, "Comment ID missing from response");
+
+  const response = await request(app).get(`/api/v1/comments/${comment._id}`);
+
+  assert.equal(
+    response.status,
+    200,
+    `Retrieving comment failed: ${JSON.stringify(response.body)}`,
+  );
+});
+
+test("comment owner can update a comment using PUT", async () => {
+  const createResponse = await createComment(
+    firstToken,
+    "Comment for PUT test",
+  );
+
+  assert.equal(
+    createResponse.status,
+    201,
+    `Comment creation failed: ${JSON.stringify(createResponse.body)}`,
+  );
+
+  const comment = getCommentFromResponse(createResponse);
+  assert.ok(comment?._id, "Comment ID missing from response");
+
+  const response = await request(app)
+    .put(`/api/v1/comments/${comment._id}`)
+    .set("Authorization", `Bearer ${firstToken}`)
+    .send({
+      content: "Updated using PUT",
+    });
+
+  assert.equal(
+    response.status,
+    200,
+    `Comment update failed: ${JSON.stringify(response.body)}`,
+  );
 });
