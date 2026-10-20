@@ -307,7 +307,7 @@ The tests cover authentication, post operations, comment operations, validation,
 
 ## Author
 
-**Md Mazid Hussain**
+**Mazid Hussain**
 
 - GitHub: [mdmaj](https://github.com/mdmaj)
 - Portfolio: [mdmaj.in](https://www.mdmaj.in/)
